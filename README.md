@@ -1,12 +1,12 @@
 # Google Workspace admin script (gwadmin)
-A PowerShell launcher for common Google Workspace administration tasks driven by [GAM](https://github.com/GAM-team/GAM/). Designed around offboarding-style operations: renaming an offboarded user and automatically routing their historical email into a freshly configured Google Group, moving their Drive content into a Shared Drive, transferring their calendars and event-organizer rights to another account, and managing mailbox delegation.
+A PowerShell launcher for common Google Workspace administration tasks driven by [GAM](https://github.com/GAM-team/GAM/). Designed around offboarding-style operations: moving a user's Drive content into a Shared Drive and then cleaning up access delegation, renaming an offboarded user and automatically routing their historical email into a freshly configured Google Group, transferring calendars and event-organizer rights to another account, and managing mailbox delegation.
 
 <!-- buttons -->
 [![Stars](https://img.shields.io/github/stars/ivancarlosti/gwadmin?label=⭐%20Stars&color=gold&style=flat)](https://github.com/ivancarlosti/gwadmin/stargazers)
 [![Watchers](https://img.shields.io/github/watchers/ivancarlosti/gwadmin?label=Watchers&style=flat&color=red)](https://github.com/sponsors/ivancarlosti)
 [![Forks](https://img.shields.io/github/forks/ivancarlosti/gwadmin?label=Forks&style=flat&color=ff69b4)](https://github.com/sponsors/ivancarlosti)
 [![Downloads](https://img.shields.io/github/downloads/ivancarlosti/gwadmin/total?label=Downloads&color=success)](https://github.com/ivancarlosti/gwadmin/releases)
-[![GitHub commit activity](https://img.shields.io/github/commit-activity/m/ivancarlosti/gwadmin?label=Activity)](https://github.com/ivancarlosti/gwadmin/pulse)
+[![GitHub commit activity](https://img.shields.io/github/commit-m/m/ivancarlosti/gwadmin?label=Activity)](https://github.com/ivancarlosti/gwadmin/pulse)
 [![GitHub Issues](https://img.shields.io/github/issues/ivancarlosti/gwadmin?label=Issues&color=orange)](https://github.com/ivancarlosti/gwadmin/issues)  
 [![License](https://img.shields.io/github/license/ivancarlosti/gwadmin?label=License)](LICENSE)
 [![GitHub last commit](https://img.shields.io/github/last-commit/ivancarlosti/gwadmin?label=Last%20Commit)](https://github.com/ivancarlosti/gwadmin/commits)
@@ -18,44 +18,47 @@ A PowerShell launcher for common Google Workspace administration tasks driven by
 
 The launcher exposes a numbered menu. Each item validates the admin account, the source mailbox, and (where applicable) the target before running its GAM command.
 
-1. **Automate User to Group Redirection & Archive** — A multi-step offboarding pipeline that transitions a user's address into a collaborative archive group:
+1. **Move Drive content to a new Shared Drive** — creates a fresh Shared Drive named `Migrated from <source> - <datetime>`, asks for an optional target administrator to assign as organizer, grants the source user temporary organizer access to perform the move, transfers all My Drive content into the Shared Drive, and then **removes the source user's organizer permission** to ensure clean access delegation.
+
+   ```
+   gam user <admin> create teamdrive "Migrated from <source> - <datetime>"
+   gam user <admin> add drivefileacl <sdid> user <target-admin> role organizer   (if provided)
+   gam user <admin> add drivefileacl <sdid> user <source> role organizer
+   gam user <source> move drivefile root teamdriveparentid <sdid> mergewithparent
+   gam user <admin> del drivefileacl <sdid> user <source>
+   ```
+
+2. **Automate User to Group Redirection & Archive** — A multi-step offboarding pipeline that transitions a user's address into a collaborative archive group:
+
    * Renames the primary user to `<username>-old@<domain>`.
    * Waits for directory processing and safely deletes the automatically generated email alias.
    * Creates a Mailing group named `redir_<username>` using the user's original email address.
    * Optionally assigns a specified manager as the Group Owner.
-   * Configures Mailing group policies to allow external postings, enforce hidden membership lists, and restrict group access to invited members only.
+   * Configures Mailing group policies: external posting allowed, invite-only joining, members-only visibility, and **`allow_external_members` set to `false`** (no external members permitted).
    * Archives every historical message from the newly-renamed user mailbox into the newly-created group.
-   * The launcher exposes a numbered menu. Each item validates the admin account, the source mailbox, and (where applicable) the target before running its GAM command.
 
    ```
-   gam update user  email -old@
-   gam delete alias 
-   gam create group  name redir_
-   gam update group  who_can_contact_owner anyone_can_contact who_can_view_group all_members_can_view who_can_post_message anyone_can_post who_can_view_membership all_members_can_view who_can_join invited_can_join allow_external_members true
-   gam user -old@ archive messages  max_to_archive 0 doit
-   ```
-
-2. **Move Drive content to a new Shared Drive** — creates a fresh Shared Drive named `Migrated from <source> - <datetime>` and moves the source user's My Drive content into it.
-
-   ```
-   gam user   create teamdrive "Migrated from  - "
-   gam user   add drivefileacl  user  role organizer
-   gam user  move drivefile root teamdriveparentid  mergewithparent
+   gam update user <source> email <source>-old@<domain>
+   gam delete alias <source>
+   gam create group <source> name redir_<username>
+   gam update group <source> owner <owner-address>                                    (optional)
+   gam update group <source> who_can_contact_owner anyone_can_contact who_can_view_group all_members_can_view who_can_post_message anyone_can_post who_can_view_membership all_members_can_view who_can_join invited_can_join allow_external_members false
+   gam user <source>-old@<domain> archive messages <source> max_to_archive 0 doit
    ```
 
 3. **Transfer calendars to another account** — reassigns secondary calendars and, for the primary calendar (which Google won't let you transfer), reassigns the organizer of all *future* events to the target user. After this runs, the target user can cancel those events and Google will send proper cancellation notices to invitees, even if the source user is later deleted.
 
    ```
-   gam user  transfer calendars 
-   gam user  update event  calendar primary newowner
+   gam user <source> transfer calendars <target>
+   gam user <source> update event <event-id> calendar primary newowner <target>
    ```
 
 4. **List / add / remove mailbox delegation** — manage who has delegated access to a mailbox.
 
    ```
-   gam user  show delegates
-   gam user  add delegates 
-   gam user  del delegates
+   gam user <source> show delegates
+   gam user <source> add delegates <delegate>
+   gam user <source> del delegates <delegate>
    ```
 
 5. **Change GAM project** — re-select which GAM multi-project profile to use.
@@ -67,7 +70,7 @@ Set variables at the top of `gwadmin.ps1` if your install differs from the defau
 
    ```
    $GAMpath = "C:\GAM7"
-   $gamsettings = "$env:USERPROFILE.gam"
+   $gamsettings = "$env:USERPROFILE\.gam"
    $destinationpath = (New-Object -ComObject Shell.Application).NameSpace('shell:Downloads').Self.Path
    ```
 
@@ -88,16 +91,6 @@ If PowerShell blocks the script with "Running scripts is disabled on this system
 * Windows 10+ or Windows Server 2019+
 * [GAM](https://github.com/GAM-team/GAM/) installed and configured for multi-project use
 * PowerShell 5.1 or later
-
-
-
-
-   ```
-   gam user <source> show delegates
-   gam user <source> add delegates <delegate>
-   gam user <source> del delegates <delegate>
-   ```
-   
 
 
 <!-- footer -->

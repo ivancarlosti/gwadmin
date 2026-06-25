@@ -172,7 +172,7 @@ function Select-GAMProject {
 }
 
 # ------------------------------------------------------------------
-# Feature 1: Automate User to Group Redirection & Archive
+# Feature 1: Move Drive content to a new Shared Drive
 # ------------------------------------------------------------------
 
 function Invoke-CopyMessagesToGroup {
@@ -227,7 +227,7 @@ function Invoke-CopyMessagesToGroup {
         who_can_post_message anyone_can_post `
         who_can_view_membership all_members_can_view `
         who_can_join invited_can_join `
-        allow_external_members true
+        allow_external_members false
 
     # Step 6: Archive messages from the renamed account to the newly created group
     Write-Host "`n[6/6] Archiving messages from $newAddress into $sourceAddress..."
@@ -238,7 +238,7 @@ function Invoke-CopyMessagesToGroup {
 }
 
 # ------------------------------------------------------------------
-# Feature 2: Move Drive content to a new Shared Drive
+# Feature 2: Automate User to Group Redirection & Archive
 # ------------------------------------------------------------------
 
 function Invoke-MoveDriveToSharedDrive {
@@ -270,6 +270,15 @@ function Invoke-MoveDriveToSharedDrive {
 
     Write-Host
     Write-Host "New Shared Drive ID: $sdid"
+
+    # Ask for target administrator email for the new Shared Drive
+    $targetAdmin = Read-Host "Please enter the target administrator email for the new Shared Drive (leave blank to skip)"
+    if (-not [string]::IsNullOrWhiteSpace($targetAdmin)) {
+        Write-Host "Adding $targetAdmin as organizer on the Shared Drive..."
+        & "$GAMpath\gam.exe" user $adminAddress add drivefileacl $sdid user $targetAdmin role organizer
+    }
+
+    Write-Host
     Write-Host "Granting source user organizer access on the Shared Drive..."
     & "$GAMpath\gam.exe" user $adminAddress add drivefileacl $sdid user $sourceAddress role organizer
 
@@ -279,6 +288,10 @@ function Invoke-MoveDriveToSharedDrive {
 
     Write-Host
     Write-Host "Drive content moved into Shared Drive '$sharedDriveName' (ID: $sdid)."
+
+    Write-Host
+    Write-Host "Removing source user's organizer permission from the Shared Drive..."
+    & "$GAMpath\gam.exe" user $adminAddress del drivefileacl $sdid user $sourceAddress
 
     Show-FeatureFooter "MOVE DRIVE CONTENT TO A NEW SHARED DRIVE"
 }
@@ -388,8 +401,8 @@ function Show-Menu {
     Write-Host "Admin account:        $adminAddress"
     Write-Host
     Write-Host "Please choose an option:"
-    Write-Host "1. Automate User to Group Redirection & Archive"
-    Write-Host "2. Move Drive content to a new Shared Drive"
+    Write-Host "1. Move Drive content to a new Shared Drive"
+    Write-Host "2. Automate User to Group Redirection & Archive"
     Write-Host "3. Transfer calendars to another account"
     Write-Host "4. List, add or remove mailbox delegation"
     Write-Host "5. Change GAM project"
@@ -416,8 +429,8 @@ while ($true) {
 
     try {
         switch ($option) {
-            '1' { Invoke-CopyMessagesToGroup }
-            '2' { Invoke-MoveDriveToSharedDrive }
+            '1' { Invoke-MoveDriveToSharedDrive }
+            '2' { Invoke-CopyMessagesToGroup }
             '3' { Invoke-TransferCalendars }
             '4' { Invoke-MailboxDelegation }
             '5' { Select-GAMProject }
