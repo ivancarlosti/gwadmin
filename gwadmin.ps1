@@ -208,6 +208,10 @@ function Invoke-CopyMessagesToGroup {
     Write-Host "`n[4/6] Creating routing group '$groupName' at $sourceAddress..."
     & "$GAMpath\gam.exe" create group $sourceAddress name $groupName
 
+    # Step 4b: Pause to let Google Workspace fully propagate the new group before use
+    Write-Host "Pausing 30 seconds for group propagation before configuring and archiving..."
+    Start-Sleep -Seconds 30
+
     # Step 5: Optional Owner Assignment
     Write-Host "`n[5/6] Assigning permissions and settings..."
     $addOwner = Read-Host "Do you want to add an owner to this new group? (y/N)"
@@ -289,9 +293,17 @@ function Invoke-MoveDriveToSharedDrive {
     Write-Host
     Write-Host "Drive content moved into Shared Drive '$sharedDriveName' (ID: $sdid)."
 
+    # Pause to let file operations settle before modifying permissions
+    Write-Host "Pausing 30 seconds for file operations to settle before modifying permissions..."
+    Start-Sleep -Seconds 30
+
     Write-Host
     Write-Host "Removing source user's organizer permission from the Shared Drive..."
     & "$GAMpath\gam.exe" user $adminAddress del drivefileacl $sdid user $sourceAddress
+
+    Write-Host
+    Write-Host "Removing admin user's organizer permission from the Shared Drive..."
+    & "$GAMpath\gam.exe" user $adminAddress del drivefileacl $sdid user $adminAddress
 
     Show-FeatureFooter "MOVE DRIVE CONTENT TO A NEW SHARED DRIVE"
 }
