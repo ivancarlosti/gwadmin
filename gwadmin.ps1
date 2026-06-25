@@ -192,13 +192,17 @@ function Invoke-CopyMessagesToGroup {
     Write-Host "`n[1/6] Renaming user account to $newAddress..."
     & "$GAMpath\gam.exe" update user $sourceAddress email $newAddress
 
-    # Step 2: Remove the automatic alias that Google creates upon renaming
-    Write-Host "`n[2/6] Deleting the leftover alias for $sourceAddress..."
+    # Step 2: Pause to let Google Workspace generate the automatic alias
+    Write-Host "`n[2/6] Pausing for 30 seconds to allow Google Workspace to generate the automatic alias..."
+    Start-Sleep -Seconds 30
+
+    # Step 3: Remove the automatic alias that Google created upon renaming
+    Write-Host "`n[3/6] Deleting the leftover alias for $sourceAddress..."
     & "$GAMpath\gam.exe" delete alias $sourceAddress
 
-    # Step 3: Pause to let Google Workspace sync
-    Write-Host "`n[3/6] Pausing for 30 seconds to let Google Workspace directory changes sync..."
-    Start-Sleep -Seconds 30
+    # Step 3b: Short buffer pause to ensure the alias is fully purged from the directory cache
+    Write-Host "Pausing 10 seconds for directory synchronization before group creation..."
+    Start-Sleep -Seconds 10
 
     # Step 4: Create the new group using the original email
     Write-Host "`n[4/6] Creating routing group '$groupName' at $sourceAddress..."
@@ -208,7 +212,6 @@ function Invoke-CopyMessagesToGroup {
     Write-Host "`n[5/6] Assigning permissions and settings..."
     $addOwner = Read-Host "Do you want to add an owner to this new group? (y/N)"
     if ($addOwner -match "^[yY]") {
-        # Loop until a valid user is provided or skipped
         $ownerAddress = Read-Host "Please enter the owner's mailbox address"
         if (-not [string]::IsNullOrWhiteSpace($ownerAddress)) {
             Write-Host "Adding $ownerAddress as owner..."
