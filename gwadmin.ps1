@@ -172,20 +172,66 @@ function Select-GAMProject {
 }
 
 # ------------------------------------------------------------------
-# Feature 1: Copy mailbox messages to a group
+# Feature 1: Automate User to Group Redirection & Archive
 # ------------------------------------------------------------------
 
 function Invoke-CopyMessagesToGroup {
-    Show-FeatureHeader "COPY MAILBOX MESSAGES TO A GROUP"
+    Show-FeatureHeader "USER TO GROUP REDIRECTION AND ARCHIVE"
 
-    $sourceAddress = Prompt-User  "Please enter the source mailbox address"
-    $targetAddress = Prompt-Group "Please enter the target group address"
+    $sourceAddress = Prompt-User "Please enter the user's current mailbox address"
 
-    Write-Host
-    Write-Host "Running: gam user $sourceAddress archive messages $targetAddress max_to_archive 0 doit"
-    & "$GAMpath\gam.exe" user $sourceAddress archive messages $targetAddress max_to_archive 0 doit
+    # Break down the email to form the new -old address and the group name
+    $parts = $sourceAddress -split "@"
+    $username = $parts[0]
+    $domain = $parts[1]
+    
+    $newAddress = "$username-old@$domain"
+    $groupName = "redir_$username"
 
-    Show-FeatureFooter "COPY MAILBOX MESSAGES TO A GROUP"
+    # Step 1: Rename the user
+    Write-Host "`n[1/6] Renaming user account to $newAddress..."
+    & "$GAMpath\gam.exe" update user $sourceAddress email $newAddress
+
+    # Step 2: Remove the automatic alias that Google creates upon renaming
+    Write-Host "`n[2/6] Deleting the leftover alias for $sourceAddress..."
+    & "$GAMpath\gam.exe" delete alias $sourceAddress
+
+    # Step 3: Pause to let Google Workspace sync
+    Write-Host "`n[3/6] Pausing for 30 seconds to let Google Workspace directory changes sync..."
+    Start-Sleep -Seconds 30
+
+    # Step 4: Create the new group using the original email
+    Write-Host "`n[4/6] Creating routing group '$groupName' at $sourceAddress..."
+    & "$GAMpath\gam.exe" create group $sourceAddress name $groupName
+
+    # Step 5: Optional Owner Assignment
+    Write-Host "`n[5/6] Assigning permissions and settings..."
+    $addOwner = Read-Host "Do you want to add an owner to this new group? (y/N)"
+    if ($addOwner -match "^[yY]") {
+        # Loop until a valid user is provided or skipped
+        $ownerAddress = Read-Host "Please enter the owner's mailbox address"
+        if (-not [string]::IsNullOrWhiteSpace($ownerAddress)) {
+            Write-Host "Adding $ownerAddress as owner..."
+            & "$GAMpath\gam.exe" update group $sourceAddress add owner $ownerAddress
+        }
+    }
+
+    # Step 5b: Apply the Group Settings based on the image provided
+    Write-Host "Applying group policies (External posting allowed, Invite only, Members view only)..."
+    & "$GAMpath\gam.exe" update group $sourceAddress `
+        who_can_contact_owner anyone_can_contact `
+        who_can_view_group all_members_can_view `
+        who_can_post_message anyone_can_post `
+        who_can_view_membership all_members_can_view `
+        who_can_join invited_can_join `
+        allow_external_members true
+
+    # Step 6: Archive messages from the renamed account to the newly created group
+    Write-Host "`n[6/6] Archiving messages from $newAddress into $sourceAddress..."
+    Write-Host "Command running: gam user $newAddress archive messages $sourceAddress max_to_archive 0 doit"
+    & "$GAMpath\gam.exe" user $newAddress archive messages $sourceAddress max_to_archive 0 doit
+
+    Show-FeatureFooter "USER TO GROUP REDIRECTION AND ARCHIVE"
 }
 
 # ------------------------------------------------------------------
@@ -339,7 +385,7 @@ function Show-Menu {
     Write-Host "Admin account:        $adminAddress"
     Write-Host
     Write-Host "Please choose an option:"
-    Write-Host "1. Copy mailbox messages to a group"
+    Write-Host "1. Automate User to Group Redirection & Archive"
     Write-Host "2. Move Drive content to a new Shared Drive"
     Write-Host "3. Transfer calendars to another account"
     Write-Host "4. List, add or remove mailbox delegation"
