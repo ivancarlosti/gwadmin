@@ -105,10 +105,8 @@ Check `testing-guideline.md` as a suggested testing checklist.
 ## Instructions
 * Download the latest release and extract it locally ([releases](https://github.com/ivancarlosti/gwadmin/releases/latest)).
 * Adjust the variables in `gwadmin.ps1` if needed.
-* Run `gwadmin.ps1` from PowerShell (right-click → Run with PowerShell, or `powershell -ExecutionPolicy Bypass -File .\gwadmin.ps1`).
+* Run `launcher.bat` (right-click → Run as administrator). It automatically locates the PowerShell script and runs it with the execution policy bypassed, so you don't need to deal with PowerShell restrictions manually.
 * Pick a GAM project, then choose a menu option and follow the prompts.
-
-If PowerShell blocks the script with "Running scripts is disabled on this system", see `POWERSHELL_ISSUE.md`.
 
 ## Requirements
 * Windows 10+ or Windows Server 2019+
