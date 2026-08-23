@@ -136,7 +136,7 @@ function Select-GroupFromList {
     $csv = Join-Path $env:TEMP "gwadmin-groups-$datetime.csv"
     Write-Host $promptText
     Write-Host "Loading groups..."
-    & "$GAMpath\gam.exe" redirect csv $csv print groups fields email,name 2>&1
+    $listOutput = & "$GAMpath\gam.exe" redirect csv $csv print groups fields email,name 2>&1
 
     $groups = @()
     if (Test-Path $csv) {
@@ -146,6 +146,10 @@ function Select-GroupFromList {
 
     if ($groups.Count -eq 0) {
         Write-Host "No groups were found."
+        if ($listOutput) {
+            Write-Host "GAM output:"
+            $listOutput | ForEach-Object { Write-Host $_ }
+        }
         return $null
     }
 
@@ -176,7 +180,7 @@ function Select-SharedDriveFromList {
     $csv = Join-Path $env:TEMP "gwadmin-teamdrives-$datetime.csv"
     Write-Host $promptText
     Write-Host "Loading Shared Drives..."
-    & "$GAMpath\gam.exe" redirect csv $csv print teamdrives fields id,name 2>&1
+    $listOutput = & "$GAMpath\gam.exe" redirect csv $csv print teamdrives fields id,name 2>&1
 
     $drives = @()
     if (Test-Path $csv) {
@@ -186,6 +190,10 @@ function Select-SharedDriveFromList {
 
     if ($drives.Count -eq 0) {
         Write-Host "No Shared Drives were found."
+        if ($listOutput) {
+            Write-Host "GAM output:"
+            $listOutput | ForEach-Object { Write-Host $_ }
+        }
         return $null
     }
 
