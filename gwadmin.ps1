@@ -130,6 +130,86 @@ function Prompt-Group {
     }
 }
 
+function Select-GroupFromList {
+    param([string]$promptText)
+
+    $csv = Join-Path $env:TEMP "gwadmin-groups-$datetime.csv"
+    Write-Host $promptText
+    Write-Host "Loading groups..."
+    & "$GAMpath\gam.exe" redirect csv $csv print groups fields email,name 2>&1
+
+    $groups = @()
+    if (Test-Path $csv) {
+        $groups = @(Import-Csv $csv | Where-Object { -not [string]::IsNullOrWhiteSpace($_.email) })
+        Remove-Item $csv -ErrorAction SilentlyContinue
+    }
+
+    if ($groups.Count -eq 0) {
+        Write-Host "No groups were found."
+        return $null
+    }
+
+    Write-Host
+    Write-Host "Groups available:"
+    for ($i = 0; $i -lt $groups.Count; $i++) {
+        $groupName = $groups[$i].name
+        if ([string]::IsNullOrWhiteSpace($groupName)) { $groupName = "(no name)" }
+        Write-Host "$($i + 1). $($groups[$i].email) - $groupName"
+    }
+    Write-Host
+
+    while ($true) {
+        $selection = Read-Host "Please enter the number of the destination group"
+        [int]$parsedSelection = 0
+        if ([int]::TryParse($selection, [ref]$parsedSelection) -and
+            $parsedSelection -ge 1 -and
+            $parsedSelection -le $groups.Count) {
+            return $groups[$parsedSelection - 1].email
+        }
+        Write-Host "Invalid selection. Please enter a number between 1 and $($groups.Count)."
+    }
+}
+
+function Select-SharedDriveFromList {
+    param([string]$promptText)
+
+    $csv = Join-Path $env:TEMP "gwadmin-teamdrives-$datetime.csv"
+    Write-Host $promptText
+    Write-Host "Loading Shared Drives..."
+    & "$GAMpath\gam.exe" redirect csv $csv print teamdrives fields id,name 2>&1
+
+    $drives = @()
+    if (Test-Path $csv) {
+        $drives = @(Import-Csv $csv | Where-Object { -not [string]::IsNullOrWhiteSpace($_.id) })
+        Remove-Item $csv -ErrorAction SilentlyContinue
+    }
+
+    if ($drives.Count -eq 0) {
+        Write-Host "No Shared Drives were found."
+        return $null
+    }
+
+    Write-Host
+    Write-Host "Shared Drives available:"
+    for ($i = 0; $i -lt $drives.Count; $i++) {
+        $driveName = $drives[$i].name
+        if ([string]::IsNullOrWhiteSpace($driveName)) { $driveName = "(no name)" }
+        Write-Host "$($i + 1). $driveName ($($drives[$i].id))"
+    }
+    Write-Host
+
+    while ($true) {
+        $selection = Read-Host "Please enter the number of the destination Shared Drive"
+        [int]$parsedSelection = 0
+        if ([int]::TryParse($selection, [ref]$parsedSelection) -and
+            $parsedSelection -ge 1 -and
+            $parsedSelection -le $drives.Count) {
+            return $drives[$parsedSelection - 1].id
+        }
+        Write-Host "Invalid selection. Please enter a number between 1 and $($drives.Count)."
+    }
+}
+
 # ------------------------------------------------------------------
 # Project selection
 # ------------------------------------------------------------------
@@ -172,7 +252,7 @@ function Select-GAMProject {
 }
 
 # ------------------------------------------------------------------
-# Feature 1: Move Drive content to a new Shared Drive
+# Feature: Automate User to Group Redirection & Archive (new group)
 # ------------------------------------------------------------------
 
 function Invoke-CopyMessagesToGroup {
@@ -242,7 +322,31 @@ function Invoke-CopyMessagesToGroup {
 }
 
 # ------------------------------------------------------------------
-# Feature 2: Automate User to Group Redirection & Archive
+# Feature: Copy user mailbox to an existing Group (choose from list)
+# ------------------------------------------------------------------
+
+function Invoke-ArchiveToExistingGroup {
+    Show-FeatureHeader "COPY USER MAILBOX TO AN EXISTING GROUP"
+
+    $sourceAddress = Prompt-User "Please enter the user's current mailbox address"
+
+    $groupAddress = Select-GroupFromList "Select the destination group for the mailbox archive"
+    if (-not $groupAddress) {
+        Write-Host "No destination group selected. Operation cancelled."
+        Show-FeatureFooter "COPY USER MAILBOX TO AN EXISTING GROUP"
+        return
+    }
+
+    Write-Host
+    Write-Host "Archiving messages from $sourceAddress into group $groupAddress..."
+    Write-Host "Command running: gam user $sourceAddress archive messages $groupAddress max_to_archive 0 doit"
+    & "$GAMpath\gam.exe" user $sourceAddress archive messages $groupAddress max_to_archive 0 doit
+
+    Show-FeatureFooter "COPY USER MAILBOX TO AN EXISTING GROUP"
+}
+
+# ------------------------------------------------------------------
+# Feature: Move Drive content to a new Shared Drive
 # ------------------------------------------------------------------
 
 function Invoke-MoveDriveToSharedDrive {
@@ -306,6 +410,44 @@ function Invoke-MoveDriveToSharedDrive {
     & "$GAMpath\gam.exe" user $adminAddress del drivefileacl $sdid user $adminAddress
 
     Show-FeatureFooter "MOVE DRIVE CONTENT TO A NEW SHARED DRIVE"
+}
+
+# ------------------------------------------------------------------
+# Feature: Move Drive content to an existing Shared Drive (choose from list)
+# ------------------------------------------------------------------
+
+function Invoke-MoveDriveToExistingSharedDrive {
+    Show-FeatureHeader "MOVE DRIVE CONTENT TO AN EXISTING SHARED DRIVE"
+
+    $sourceAddress = Prompt-User "Please enter the source mailbox address (Drive owner)"
+
+    $sdid = Select-SharedDriveFromList "Select the destination Shared Drive"
+    if (-not $sdid) {
+        Write-Host "No destination Shared Drive selected. Operation cancelled."
+        Show-FeatureFooter "MOVE DRIVE CONTENT TO AN EXISTING SHARED DRIVE"
+        return
+    }
+
+    Write-Host
+    Write-Host "Granting source user temporary organizer access on Shared Drive $sdid..."
+    & "$GAMpath\gam.exe" user $adminAddress add drivefileacl $sdid user $sourceAddress role organizer
+
+    Write-Host
+    Write-Host "Running: gam user $sourceAddress move drivefile root teamdriveparentid $sdid mergewithparent"
+    & "$GAMpath\gam.exe" user $sourceAddress move drivefile root teamdriveparentid $sdid mergewithparent
+
+    Write-Host
+    Write-Host "Drive content moved into existing Shared Drive (ID: $sdid)."
+
+    # Pause to let file operations settle before modifying permissions
+    Write-Host "Pausing 30 seconds for file operations to settle before modifying permissions..."
+    Start-Sleep -Seconds 30
+
+    Write-Host
+    Write-Host "Removing source user's temporary organizer permission from the Shared Drive..."
+    & "$GAMpath\gam.exe" user $adminAddress del drivefileacl $sdid user $sourceAddress
+
+    Show-FeatureFooter "MOVE DRIVE CONTENT TO AN EXISTING SHARED DRIVE"
 }
 
 # ------------------------------------------------------------------
@@ -413,12 +555,14 @@ function Show-Menu {
     Write-Host "Admin account:        $adminAddress"
     Write-Host
     Write-Host "Please choose an option:"
-    Write-Host "1. Move Drive content to a new Shared Drive"
-    Write-Host "2. Automate User to Group Redirection & Archive"
-    Write-Host "3. Transfer calendars to another account"
-    Write-Host "4. List, add or remove mailbox delegation"
-    Write-Host "5. Change GAM project"
-    Write-Host "6. Exit script"
+    Write-Host "1. Move Drive content to a NEW Shared Drive (create automatically)"
+    Write-Host "2. Move Drive content to an EXISTING Shared Drive (choose from list)"
+    Write-Host "3. Automate User to Group Redirection & Archive (creates a NEW group)"
+    Write-Host "4. Copy user mailbox to an EXISTING Group (choose from list)"
+    Write-Host "5. Transfer calendars to another account"
+    Write-Host "6. List, add or remove mailbox delegation"
+    Write-Host "7. Change GAM project"
+    Write-Host "8. Exit script"
     return (Read-Host -Prompt "Enter your choice")
 }
 
@@ -442,11 +586,13 @@ while ($true) {
     try {
         switch ($option) {
             '1' { Invoke-MoveDriveToSharedDrive }
-            '2' { Invoke-CopyMessagesToGroup }
-            '3' { Invoke-TransferCalendars }
-            '4' { Invoke-MailboxDelegation }
-            '5' { Select-GAMProject }
-            '6' {
+            '2' { Invoke-MoveDriveToExistingSharedDrive }
+            '3' { Invoke-CopyMessagesToGroup }
+            '4' { Invoke-ArchiveToExistingGroup }
+            '5' { Invoke-TransferCalendars }
+            '6' { Invoke-MailboxDelegation }
+            '7' { Select-GAMProject }
+            '8' {
                 Write-Output "Exiting script."
                 break
             }
@@ -457,5 +603,5 @@ while ($true) {
         Write-Host "An error occurred: $_"
     }
 
-    if ($option -eq '6') { break }
+    if ($option -eq '8') { break }
 }

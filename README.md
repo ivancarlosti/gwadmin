@@ -18,7 +18,7 @@ A PowerShell launcher for common Google Workspace administration tasks driven by
 
 The launcher exposes a numbered menu. Each item validates the admin account, the source mailbox, and (where applicable) the target before running its GAM command.
 
-1. **Move Drive content to a new Shared Drive** — A clean transfer of a user's entire My Drive into a freshly created Shared Drive, with automatic permission cleanup so no unwanted users remain as organizers:
+1. **Move Drive content to a new Shared Drive (create automatically)** — A clean transfer of a user's entire My Drive into a freshly created Shared Drive, with automatic permission cleanup so no unwanted users remain as organizers:
 
    * Creates a new Shared Drive named `Migrated from <source> - <datetime>` (timestamped for traceability).
    * Prompts for an optional target administrator to assign as organizer on the new Shared Drive.
@@ -38,7 +38,23 @@ The launcher exposes a numbered menu. Each item validates the admin account, the
    gam user <admin> del drivefileacl <sdid> user <admin>
    ```
 
-2. **Automate User to Group Redirection & Archive** — A multi-step offboarding pipeline that transitions a user's address into a collaborative archive group:
+2. **Move Drive content to an existing Shared Drive (choose from list)** — Transfers a user's entire My Drive into a Shared Drive that already exists, selected from a numbered list:
+
+   * Lists every Shared Drive in the domain and asks for the number of the destination.
+   * Grants the source user temporary organizer access to enable the file move.
+   * Transfers all My Drive content (root) from the source user into the chosen Shared Drive using `mergewithparent`.
+   * Waits 30 seconds for file operations to settle.
+   * **Removes only the source user's organizer permission** — existing permissions (including the admin's) are left untouched.
+
+   ```
+   gam redirect csv <tempfile> print teamdrives fields id,name
+   gam user <admin> add drivefileacl <sdid> user <source> role organizer
+   gam user <source> move drivefile root teamdriveparentid <sdid> mergewithparent
+   (pause 30s for operations to settle)
+   gam user <admin> del drivefileacl <sdid> user <source>
+   ```
+
+3. **Automate User to Group Redirection & Archive (creates a new group)** — A multi-step offboarding pipeline that transitions a user's address into a collaborative archive group:
 
    * Renames the primary user to `<username>-old@<domain>`.
    * Waits for directory processing and safely deletes the automatically generated email alias.
@@ -56,7 +72,18 @@ The launcher exposes a numbered menu. Each item validates the admin account, the
    gam user <source>-old@<domain> archive messages <source> max_to_archive 0 doit
    ```
 
-3. **Transfer calendars to another account** — A two-phase process that moves calendar ownership from a departing user to a target user, including a workaround for Google's primary-calendar transfer limitation:
+4. **Copy user mailbox to an existing Group (choose from list)** — Archives every historical message from a user's mailbox into a group that already exists, without renaming the user or touching aliases:
+
+   * Prompts for the source mailbox address.
+   * Lists every group in the domain and asks for the number of the destination group.
+   * Archives all messages from the source mailbox into the selected group.
+
+   ```
+   gam redirect csv <tempfile> print groups fields email,name
+   gam user <source> archive messages <group> max_to_archive 0 doit
+   ```
+
+5. **Transfer calendars to another account** — A two-phase process that moves calendar ownership from a departing user to a target user, including a workaround for Google's primary-calendar transfer limitation:
 
    * **Phase A — Secondary calendars:** Transfers all secondary (non-primary) calendars owned by the source user to the target user in a single GAM command. Ownership, events, and sharing settings are all moved.
    * **Phase B — Primary calendar events:** Since Google does not allow transferring a user's primary calendar itself, the script instead:
@@ -71,7 +98,7 @@ The launcher exposes a numbered menu. Each item validates the admin account, the
    gam user <source> update event <event-id> calendar primary newowner <target>
    ```
 
-4. **List / add / remove mailbox delegation** — An interactive sub-menu for managing who has delegated access to a mailbox. Before proceeding, the script checks that Gmail mail delegation is enabled in the Google Workspace admin policies and warns if it is not.
+6. **List / add / remove mailbox delegation** — An interactive sub-menu for managing who has delegated access to a mailbox. Before proceeding, the script checks that Gmail mail delegation is enabled in the Google Workspace admin policies and warns if it is not.
 
    * **List Delegates** — shows all users/groups who currently have delegated access to the mailbox.
    * **Add Delegates** — grants a specified user or group delegated access to the mailbox.
@@ -84,8 +111,8 @@ The launcher exposes a numbered menu. Each item validates the admin account, the
    gam user <source> del delegates <delegate>
    ```
 
-5. **Change GAM project** — re-select which GAM multi-project profile to use.
-6. **Exit script**.
+7. **Change GAM project** — re-select which GAM multi-project profile to use.
+8. **Exit script**.
 
 ## Configuration
 
