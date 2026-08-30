@@ -34,8 +34,8 @@ The launcher exposes a numbered menu. Each item validates the admin account, the
    gam user <admin> add drivefileacl <sdid> user <source> role organizer
    gam user <source> move drivefile root teamdriveparentid <sdid> mergewithparent
    (pause 30s for operations to settle)
-   gam user <admin> del drivefileacl <sdid> user <source>
-   gam user <admin> del drivefileacl <sdid> user <admin>
+   gam user <admin> del drivefileacl <sdid> <source>
+   gam user <admin> del drivefileacl <sdid> <admin>
    ```
 
 2. **Move Drive content to an existing Shared Drive (choose from list)** — Transfers a user's entire My Drive into a Shared Drive that already exists, selected from a numbered list:
@@ -51,7 +51,7 @@ The launcher exposes a numbered menu. Each item validates the admin account, the
    gam user <admin> add drivefileacl <sdid> user <source> role organizer
    gam user <source> move drivefile root teamdriveparentid <sdid> mergewithparent
    (pause 30s for operations to settle)
-   gam user <admin> del drivefileacl <sdid> user <source>
+   gam user <admin> del drivefileacl <sdid> <source>
    ```
 
 3. **Automate User to Group Redirection & Archive (creates a new group)** — A multi-step offboarding pipeline that transitions a user's address into a collaborative archive group:

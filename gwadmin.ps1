@@ -411,11 +411,11 @@ function Invoke-MoveDriveToSharedDrive {
 
     Write-Host
     Write-Host "Removing source user's organizer permission from the Shared Drive..."
-    & "$GAMpath\gam.exe" user $adminAddress del drivefileacl $sdid user $sourceAddress
+    & "$GAMpath\gam.exe" user $adminAddress del drivefileacl $sdid $sourceAddress
 
     Write-Host
     Write-Host "Removing admin user's organizer permission from the Shared Drive..."
-    & "$GAMpath\gam.exe" user $adminAddress del drivefileacl $sdid user $adminAddress
+    & "$GAMpath\gam.exe" user $adminAddress del drivefileacl $sdid $adminAddress
 
     Show-FeatureFooter "MOVE DRIVE CONTENT TO A NEW SHARED DRIVE"
 }
@@ -453,7 +453,7 @@ function Invoke-MoveDriveToExistingSharedDrive {
 
     Write-Host
     Write-Host "Removing source user's temporary organizer permission from the Shared Drive..."
-    & "$GAMpath\gam.exe" user $adminAddress del drivefileacl $sdid user $sourceAddress
+    & "$GAMpath\gam.exe" user $adminAddress del drivefileacl $sdid $sourceAddress
 
     Show-FeatureFooter "MOVE DRIVE CONTENT TO AN EXISTING SHARED DRIVE"
 }
