@@ -1,0 +1,11 @@
+# Google Workspace admin accounts used by saasadmin.
+#
+# One email address per line. When you pick a GAM project, the script reads the
+# primary domain of that project and uses the account below whose domain matches
+# it, so you do not have to type the admin account every time.
+# If no line matches (or this file does not exist), you are prompted for the admin
+# account exactly as before. Lines starting with # are ignored.
+#
+# Example:
+# gwsadmin@example.com
+# gwsadmin@contoso.com

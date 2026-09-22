@@ -1,5 +1,5 @@
-# Google Workspace admin script (gwadmin)
-A PowerShell launcher for common Google Workspace administration tasks driven by [GAM](https://github.com/GAM-team/GAM/). Designed around offboarding-style operations: moving a user's Drive content into a Shared Drive and then cleaning up access delegation, renaming an offboarded user and automatically routing their historical email into a freshly configured Google Group, transferring calendars and event-organizer rights to another account, and managing mailbox delegation.
+# SaaS Admin (saasadmin)
+A PowerShell launcher and menu for common **Google Workspace** (driven by [GAM](https://github.com/GAM-team/GAM/)) and **Microsoft 365** (driven by Microsoft Graph) administration tasks, from a single entry point. The Google Workspace side is designed around offboarding-style operations: moving a user's Drive content into a Shared Drive and then cleaning up access delegation, renaming an offboarded user and automatically routing their historical email into a freshly configured Google Group, transferring calendars and event-organizer rights to another account, and managing mailbox delegation. The Microsoft 365 side covers message copies into shared mailboxes, OneDrive migrations into a new SharePoint site, calendar transfers, and SharePoint folder-size reporting.
 
 <!-- buttons -->
 [![Stars](https://img.shields.io/github/stars/ivancarlosti/gwadmin?label=⭐%20Stars&color=gold&style=flat)](https://github.com/ivancarlosti/gwadmin/stargazers)
@@ -14,9 +14,22 @@ A PowerShell launcher for common Google Workspace administration tasks driven by
 [![Code of Conduct](https://img.shields.io/badge/Code%20of%20Conduct-2.1-4baaaa)](https://github.com/ivancarlosti/gwadmin?tab=coc-ov-file)
 <!-- endbuttons -->
 
-## Features
+## Menus
 
-The launcher exposes a numbered menu. Each item validates the admin account, the source mailbox, and (where applicable) the target before running its GAM command.
+`launcher.bat` elevates itself when needed and starts `saasadmin.ps1`, which shows a platform menu:
+
+```
+1. Google Workspace (GAM)
+2. Microsoft 365 (Microsoft Graph)
+3. Install / update Microsoft Graph modules (requires elevation)
+0. Exit
+```
+
+Both sub-menus return to this platform menu, so you can move between Google Workspace and Microsoft 365 without restarting the tool. Option 3 installs or updates the Microsoft Graph PowerShell modules; when the session is not elevated it re-launches `launcher.bat` so you get the usual UAC prompt.
+
+## Google Workspace features (GAM)
+
+The Google Workspace menu validates the admin account, the source mailbox, and (where applicable) the target before running its GAM command.
 
 1. **Move Drive content to a new Shared Drive (create automatically)** — A clean transfer of a user's entire My Drive into a freshly created Shared Drive, with automatic permission cleanup so no unwanted users remain as organizers:
 
@@ -112,11 +125,55 @@ The launcher exposes a numbered menu. Each item validates the admin account, the
    ```
 
 7. **Change GAM project** — re-select which GAM multi-project profile to use.
-8. **Exit script**.
+8. **Back to the main menu** — returns to the platform menu (Google Workspace / Microsoft 365).
+
+## Microsoft 365 features (Microsoft Graph)
+
+The Microsoft 365 menu connects to a tenant listed in `m365tenant.txt` and exposes:
+
+1. **Copy mailbox messages to a shared mailbox** — Copies all messages from all folders of a source mailbox into a target shared mailbox, preserving folder structure. Source is not modified. Re-runs dedupe by `internetMessageId`.
+2. **Copy OneDrive content to a new SharePoint site** — Provisions a new Microsoft 365 group (which creates a SharePoint site), waits for it to come online, then copies the source user's entire OneDrive into the group's document library. The source OneDrive is not modified.
+3. **Transfer calendars to another account** — Copies all events (and optionally secondary calendars) from a source user to a target user. Optional ownership reassignment for future events organized by the source — see the limitations below.
+4. **Export SharePoint site folder sizes to a CSV report** — Walks the folders of a SharePoint document library and writes a CSV with the size of each folder (see below).
+5. **Switch tenant** — disconnects and lets you pick another tenant from `m365tenant.txt`.
+6. **Back to the main menu**.
+
+Every operation writes a log to `Downloads\m365admin-logs\`.
+
+### SharePoint folder size report
+
+Option 4 asks for the site (paste the site URL, or search by name), for the document library (only when the site has more than one), and for how many folder levels the report should cover:
+
+| Value | What is walked | What you get |
+|---|---|---|
+| `1` | Root and level 1 folders | The library's direct child folders, each with the size of the files directly inside it |
+| `2` (default) | Root plus levels 1 and 2 | Levels 1 and 2, where a level 1 size includes the level 2 folders below it |
+| `0` | Everything | Fully recursive sizes for every folder (slowest) |
+
+Folders deeper than the selected level are counted in their parent's `SubFolders` column but are not listed, and their content is not counted in any size.
+
+The report is written to `Downloads\m365admin-reports\sharepoint-folders-<site>-<timestamp>.csv` with these columns:
+
+| Column | Meaning |
+|---|---|
+| `Level` | `0` for the library root, `1` for its direct child folders, and so on |
+| `Folder` | Folder name |
+| `Path` | Full path inside the library (for example `Documents / Alpha / Alpha1`) |
+| `SubFolders` | Number of direct subfolders seen inside that folder |
+| `DirectFiles` / `DirectSizeBytes` / `DirectSizeMB` | Files directly inside the folder and their total size |
+| `TotalFiles` / `TotalSizeBytes` / `TotalSizeMB` | Files directly inside the folder plus those of the listed subfolders below it |
+
+A depth of `0` walks the entire tree, so it can take a long time on large libraries. Progress is printed every 25 folders, and any folder that cannot be listed is recorded in the log and skipped instead of aborting the whole report.
+
+### Known limitations (Microsoft 365)
+
+* **Mailbox copy**: Microsoft Graph does not support cross-mailbox copy actions, so messages are exported as MIME from the source and re-imported on the target. Headers, attachments and `internetMessageId` are preserved; `isRead` and `categories` are re-applied with a follow-up PATCH.
+* **OneDrive copy**: file version history is not preserved (only the current version is copied). OneNote (`.one`) notebooks and files over 250 GB are skipped with a warning.
+* **Calendar ownership reassignment**: Microsoft Graph treats `event.organizer` as immutable — there is no Graph equivalent of Google's calendar-transfer API. The opt-in reassignment is implemented as **delete-and-recreate** for future events where the source is the organizer, which sends cancellation emails followed by new invites to all attendees and regenerates any Teams meeting links. This is a Microsoft platform limitation. The feature is opt-in and requires an explicit confirmation prompt.
 
 ## Configuration
 
-Set variables at the top of `gwadmin.ps1` if your install differs from the defaults:
+Set the variables at the top of `saasadmin.ps1` if your install differs from the defaults:
 
    ```
    $GAMpath = "C:\GAM7"
@@ -126,19 +183,81 @@ Set variables at the top of `gwadmin.ps1` if your install differs from the defau
 
 `$GAMpath` — the GAM application folder.
 `$gamsettings` — the GAM multi-project settings folder.
-`$destinationpath` — where any local output ends up (currently used only for temp files).
-Check `testing-guideline.md` as a suggested testing checklist.
+`$destinationpath` — where local output ends up (`Downloads\m365admin-logs\` for logs and `Downloads\m365admin-reports\` for CSV reports; the Google Workspace side uses it only for temp files).
+
+### `m365tenant.txt`
+
+Microsoft 365 tenants to connect to, one per line. The file is read from the repository folder regardless of the current directory:
+
+   ```
+   tenantID01.onmicrosoft.com
+   tenantID02.onmicrosoft.com
+   ```
+
+### `gwemail.txt`
+
+Google Workspace admin accounts, one email address per line (lines starting with `#` are ignored):
+
+   ```
+   # one admin account per domain
+   gwsadmin@example.com
+   gwsadmin@contoso.com
+   ```
+
+When you select a GAM project, the script reads that project's primary domain with GAM and uses the account from this file whose domain matches, so you do not have to type the admin account for every operation. If nothing matches — or the file is missing, or the domain cannot be determined — you are prompted for the admin account exactly as before. Either way the account is then validated with `gam info user` and `gam user <admin> check serviceaccount`.
 
 ## Instructions
-* Download the latest release and extract it locally ([releases](https://github.com/ivancarlosti/gwadmin/releases/latest)).
-* Adjust the variables in `gwadmin.ps1` if needed.
-* Run `launcher.bat` (right-click → Run as administrator). It automatically locates the PowerShell script and runs it with the execution policy bypassed, so you don't need to deal with PowerShell restrictions manually.
-* Pick a GAM project, then choose a menu option and follow the prompts.
+* Download the latest release and extract it locally ([releases](../../releases/latest)).
+* Adjust the variables in `saasadmin.ps1` if needed.
+* Fill in `m365tenant.txt` (Microsoft 365 tenants) and `gwemail.txt` (Google Workspace admin accounts).
+* Run `launcher.bat` (right-click → Run as administrator). It elevates itself through UAC and then runs `saasadmin.ps1` with the execution policy bypassed, so you don't need to deal with PowerShell restrictions manually.
+* Pick a platform, then pick an option and follow the prompts.
+* Microsoft Graph modules missing or outdated? Use option 3 in the platform menu (it re-launches `launcher.bat` to elevate).
 
 ## Requirements
 * Windows 10+ or Windows Server 2019+
 * [GAM](https://github.com/GAM-team/GAM/) installed and configured for multi-project use
 * PowerShell 5.1 or later
+* PowerShell modules (installed or updated with option 3 of the platform menu, or by running `ADMIN-install-modules.ps1` as Administrator):
+  * `Microsoft.Graph.Authentication`
+  * `Microsoft.Graph.Users`
+  * `Microsoft.Graph.Groups`
+  * `Microsoft.Graph.Mail`
+  * `Microsoft.Graph.Files`
+  * `Microsoft.Graph.Sites`
+  * `Microsoft.Graph.Calendar`
+  * `Microsoft.Graph.Identity.DirectoryManagement`
+
+## Required Microsoft Graph scopes
+
+Requested when connecting to a tenant; all require admin consent:
+
+```
+User.Read.All Group.ReadWrite.All Directory.Read.All
+Mail.ReadWrite Mail.ReadWrite.Shared MailboxSettings.Read
+Files.ReadWrite.All Sites.ReadWrite.All
+Calendars.ReadWrite Calendars.ReadWrite.Shared
+```
+
+For the mailbox copy operation, the signed-in admin must have FullAccess on the target shared mailbox.
+
+## Repository layout
+
+```
+launcher.bat                             Elevation + single entry point
+saasadmin.ps1                            Platform menu, configuration, module bootstrap
+gwemail.txt                              Google Workspace admin accounts (per domain)
+m365tenant.txt                           Microsoft 365 tenants
+ADMIN-install-modules.ps1                Installs/updates the Microsoft Graph modules (elevated)
+POWERSHELL_ISSUE.md                      How to fix "running scripts is disabled" errors
+lib/GoogleWorkspace.ps1                  Google Workspace (GAM) features and menu
+lib/M365/M365Menu.ps1                    Microsoft 365 menu and connection handling
+lib/M365/Common.ps1                      Shared Graph helpers, logging, configuration paths
+lib/M365/Mailbox-CopyToShared.ps1        Mailbox copy
+lib/M365/OneDrive-CopyToSharePoint.ps1   OneDrive to SharePoint copy
+lib/M365/Calendar-Transfer.ps1           Calendar transfer
+lib/M365/SharePoint-FolderSizes.ps1      SharePoint folder size CSV report
+```
 
 
 <!-- footer -->

@@ -1,18 +1,11 @@
-## Google Workspace admin script (gwadmin)
-
-# Set variables
-$GAMpath = "C:\GAM7"
-$gamsettings = "$env:USERPROFILE\.gam"
-$destinationpath = (New-Object -ComObject Shell.Application).NameSpace('shell:Downloads').Self.Path
-$datetime = Get-Date -f yyyy-MM-dd-HH-mm-ss
-
-[console]::OutputEncoding = [System.Text.Encoding]::UTF8
+## Google Workspace admin functions (GAM).
+## Dot-sourced by saasadmin.ps1, which defines the shared configuration variables
+## ($GAMpath, $gamsettings, $GwEmailFile, $destinationpath, $datetime) before
+## loading this file.
 
 # ------------------------------------------------------------------
 # Shared helpers
 # ------------------------------------------------------------------
-
-function pause { $null = Read-Host 'Press ENTER key to continue' }
 
 function Get-CurrentDateString {
     $currentdate = Get-Date
@@ -95,19 +88,118 @@ function Check-PolicySettings {
     return $true
 }
 
+function Test-AdminAuthorization {
+    param([string]$adminAddress)
+    while (-not (Check-AdminAuth -adminAddress $adminAddress)) {
+        Write-Host "The admin account $adminAddress does not have proper authorization, we will run the command again to let you authorize it:"
+        & "$GAMpath\gam.exe" user $adminAddress check serviceaccount
+    }
+    return $true
+}
+
 function Prompt-Admin {
     while ($true) {
         $addr = Read-Host "Please enter the admin account"
         if ([string]::IsNullOrWhiteSpace($addr)) { continue }
         if (Check-AdminAddress -adminAddress $addr) {
-            while (-not (Check-AdminAuth -adminAddress $addr)) {
-                Write-Host "The admin account $addr does not have proper authorization, we will run the command again to let you authorize it:"
-                & "$GAMpath\gam.exe" user $addr check serviceaccount
-            }
+            [void](Test-AdminAuthorization -adminAddress $addr)
             return $addr
         }
         Write-Host "The admin account $addr does not exist, is not a Super Admin, or we have an ERROR. Please check credentials and try again."
     }
+}
+
+function Get-GwEmailFilePath {
+    if ($GwEmailFile) { return $GwEmailFile }
+    return (Join-Path $PSScriptRoot "..\gwemail.txt")
+}
+
+function Get-GwEmailAdminAccounts {
+    param([string]$Path)
+
+    if (-not $Path) { $Path = Get-GwEmailFilePath }
+    if (-not (Test-Path $Path)) { return @() }
+
+    return @(
+        Get-Content -Path $Path |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { $_ -and ($_ -notmatch '^#') }
+    )
+}
+
+function Select-GwEmailAccountForDomain {
+    param(
+        [Parameter(Mandatory)][string]$Domain,
+        [string]$Path
+    )
+
+    $accounts = Get-GwEmailAdminAccounts -Path $Path
+    return ($accounts | Where-Object { $_ -match "@$([regex]::Escape($Domain))$" } | Select-Object -First 1)
+}
+
+function Get-GamPrimaryDomain {
+    # Returns the primary domain of the currently selected GAM project, or $null
+    # when it cannot be determined (the caller then falls back to a manual prompt).
+    try {
+        $output = & "$GAMpath\gam.exe" info domain 2>&1
+    } catch {
+        return $null
+    }
+    foreach ($line in $output) {
+        if ($line -match '^\s*Domain:\s*(\S+)\s*$') { return $Matches[1] }
+    }
+
+    # Fallback for GAM builds where `info domain` is not available.
+    $csv = Join-Path $env:TEMP "gwadmin-domains-$datetime.csv"
+    try {
+        & "$GAMpath\gam.exe" redirect csv $csv print domains 2>&1 | Out-Null
+    } catch {
+        return $null
+    }
+    if (Test-Path $csv) {
+        $rows = @(Import-Csv $csv)
+        Remove-Item $csv -ErrorAction SilentlyContinue
+        foreach ($row in $rows) {
+            if (-not $row.PSObject.Properties['isPrimary']) { continue }
+            if ("$($row.isPrimary)" -notmatch '^(?i:true)$') { continue }
+            foreach ($field in @('domainName', 'primaryDomain', 'domain')) {
+                if ($row.PSObject.Properties[$field] -and -not [string]::IsNullOrWhiteSpace($row.$field)) {
+                    return $row.$field
+                }
+            }
+        }
+    }
+
+    return $null
+}
+
+function Resolve-GamAdminAccount {
+    # Prefers the admin account from gwemail.txt whose domain matches the primary
+    # domain of the selected GAM project; otherwise prompts interactively.
+    $domain = Get-GamPrimaryDomain
+    if ($domain) {
+        $gwEmailPath = Get-GwEmailFilePath
+        if (-not (Test-Path $gwEmailPath)) {
+            Write-Host "gwemail.txt was not found at $gwEmailPath. Please enter the admin account manually."
+        } else {
+            $match = Select-GwEmailAccountForDomain -Domain $domain -Path $gwEmailPath
+            if ($match) {
+                if (Check-AdminAddress -adminAddress $match) {
+                    Write-Host "Admin account $match matched the project domain $domain in gwemail.txt."
+                    [void](Test-AdminAuthorization -adminAddress $match)
+                    return $match
+                }
+                Write-Host "WARNING: $match (from gwemail.txt) does not look like a valid Super Admin. Asking manually."
+            } else {
+                Write-Host "No admin account in gwemail.txt matches the domain $domain of project '$clientName'. Asking manually."
+            }
+        }
+    } else {
+        Write-Host "Could not determine the primary domain of project '$clientName' with GAM. Asking for the admin account manually."
+    }
+
+    Write-Host
+    return (Prompt-Admin)
 }
 
 function Prompt-User {
@@ -557,10 +649,10 @@ function Invoke-MailboxDelegation {
 # Main menu
 # ------------------------------------------------------------------
 
-function Show-Menu {
+function Show-GoogleWorkspaceMenu {
     cls
-    Write-Host "GAM project selected: $clientName"
-    Write-Host "Admin account:        $adminAddress"
+    Write-Host "GAM project selected: $global:clientName"
+    Write-Host "Admin account:        $global:adminAddress"
     Write-Host
     Write-Host "Please choose an option:"
     Write-Host "1. Move Drive content to a NEW Shared Drive (create automatically)"
@@ -570,46 +662,47 @@ function Show-Menu {
     Write-Host "5. Transfer calendars to another account"
     Write-Host "6. List, add or remove mailbox delegation"
     Write-Host "7. Change GAM project"
-    Write-Host "8. Exit script"
+    Write-Host "8. Back to the main menu"
     return (Read-Host -Prompt "Enter your choice")
 }
 
-while ($true) {
-    if (-not $clientName) {
+function Invoke-GoogleWorkspaceMenu {
+    if (-not $global:clientName) {
         Select-GAMProject
     }
 
-    if (-not $adminAddress) {
-        cls
-        Write-Host "GAM project selected: $clientName"
-        Write-Host
-        Write-Host "Please provide the admin account that will be used for the operations."
-        Write-Host "It will be reused for every option until you change the GAM project."
-        Write-Host
-        $global:adminAddress = Prompt-Admin
-    }
-
-    $option = Show-Menu
-
-    try {
-        switch ($option) {
-            '1' { Invoke-MoveDriveToSharedDrive }
-            '2' { Invoke-MoveDriveToExistingSharedDrive }
-            '3' { Invoke-CopyMessagesToGroup }
-            '4' { Invoke-ArchiveToExistingGroup }
-            '5' { Invoke-TransferCalendars }
-            '6' { Invoke-MailboxDelegation }
-            '7' { Select-GAMProject }
-            '8' {
-                Write-Output "Exiting script."
-                break
-            }
-            default { Write-Output "Invalid option selected." }
+    while ($true) {
+        if (-not $global:adminAddress) {
+            cls
+            Write-Host "GAM project selected: $global:clientName"
+            Write-Host
+            Write-Host "Please provide the admin account that will be used for the operations."
+            Write-Host "It will be reused for every option until you change the GAM project."
+            Write-Host "You can also list it in gwemail.txt (one per line) to skip this prompt when the"
+            Write-Host "account domain matches the primary domain of the selected GAM project."
+            Write-Host
+            $global:adminAddress = Resolve-GamAdminAccount
         }
-    }
-    catch {
-        Write-Host "An error occurred: $_"
-    }
 
-    if ($option -eq '8') { break }
+        $option = Show-GoogleWorkspaceMenu
+
+        try {
+            switch ($option) {
+                '1' { Invoke-MoveDriveToSharedDrive }
+                '2' { Invoke-MoveDriveToExistingSharedDrive }
+                '3' { Invoke-CopyMessagesToGroup }
+                '4' { Invoke-ArchiveToExistingGroup }
+                '5' { Invoke-TransferCalendars }
+                '6' { Invoke-MailboxDelegation }
+                '7' { Select-GAMProject }
+                '8' { return }
+                default { Write-Output "Invalid option selected." }
+            }
+        }
+        catch {
+            Write-Host "An error occurred: $_"
+        }
+
+        if ($option -eq '8') { return }
+    }
 }
