@@ -139,12 +139,16 @@ function Invoke-SharePointFolderSizesMenu {
     }
 
     $depthLabel = if ($depth -eq 0) { "full" } else { "$depth level(s)" }
-    if (-not (Confirm-Action -Prompt "Start the folder size report for '$($site.displayName)' (library: $($drive.name), depth: $depthLabel)?" -DefaultYes)) {
+    if (-not (Confirm-Action -Prompt "Start the folder size report for '$(Get-SharePointSiteName -Site $site)' (library: $($drive.name), depth: $depthLabel)?" -DefaultYes)) {
         Write-Host "Cancelled." -ForegroundColor Yellow
         return
     }
 
-    Export-SharePointFolderSizesReport -Site $site -Drive $drive -Depth $depth
+    try {
+        Export-SharePointFolderSizesReport -Site $site -Drive $drive -Depth $depth
+    } catch {
+        Write-Host "  The folder size report failed: $(Get-GraphErrorMessage -ErrorRecord $_)" -ForegroundColor Red
+    }
 }
 
 function Invoke-Microsoft365Menu {

@@ -9,26 +9,110 @@
 
 $script:GraphBase = "https://graph.microsoft.com/v1.0"
 
+# Properties that exist on microsoft.graph.site. 'hostname' is NOT one of them:
+# it lives in siteCollection, which only root sites return, and projecting it
+# makes Graph reject the request with a 400 (Parsing OData Select failed).
+$script:SiteSelect = "id,displayName,name,webUrl,isPersonalSite"
+
 function Get-GraphSiteList {
     param([Parameter(Mandatory)][string]$Search)
     $encoded = [System.Uri]::EscapeDataString($Search)
-    return @(Get-AllPaged -Uri "$script:GraphBase/sites?search=$encoded&`$select=id,displayName,name,webUrl,hostname")
+    return @(Get-AllPagedWithSelectFallback -Uri "$script:GraphBase/sites?search=$encoded&`$select=$script:SiteSelect")
+}
+
+function Get-SharePointSiteName {
+    param([Parameter(Mandatory)]$Site)
+    if (-not [string]::IsNullOrWhiteSpace($Site.displayName)) { return $Site.displayName }
+    if (-not [string]::IsNullOrWhiteSpace($Site.name)) { return $Site.name }
+    return "SharePoint site"
+}
+
+function Get-SharePointSiteLabel {
+    param([Parameter(Mandatory)]$Site)
+    return "$(Get-SharePointSiteName -Site $Site) - $($Site.webUrl)"
+}
+
+function ConvertTo-SharePointSiteReference {
+    # Normalises a pasted SharePoint URL into a hostname plus a server-relative
+    # path. Returns $null when the input is not an absolute URL.
+    param([Parameter(Mandatory)][string]$Url)
+
+    $clean = $Url.Trim()
+    if ($clean -notmatch '^https?://') { return $null }
+
+    $clean = ($clean -split '#')[0]
+    $clean = ($clean -split '\?')[0]
+    $clean = [System.Uri]::UnescapeDataString($clean)
+
+    if ($clean -notmatch '^https?://([^/]+)(/.*)?$') { return $null }
+
+    $siteHost = $Matches[1]
+    $sitePath = $Matches[2]
+    if ([string]::IsNullOrWhiteSpace($sitePath) -or ($sitePath -eq '/')) { $sitePath = "" }
+    $sitePath = $sitePath.TrimEnd('/')
+    if ($sitePath -and (-not $sitePath.StartsWith('/'))) { $sitePath = "/$sitePath" }
+
+    return [pscustomobject]@{
+        Hostname     = $siteHost
+        RelativePath = $sitePath
+        WebUrl       = "https://$siteHost$sitePath"
+    }
+}
+
+function Get-SharePointSiteByPath {
+    # Documented by-path lookup: GET /sites/{hostname}:/{relative-path}
+    param([Parameter(Mandatory)]$Reference)
+
+    if ([string]::IsNullOrWhiteSpace($Reference.RelativePath)) {
+        # A bare host URL points at the tenant root site.
+        return Invoke-GraphWithRetry -Method GET -Uri "$script:GraphBase/sites/root?`$select=$script:SiteSelect"
+    }
+    return Invoke-GraphWithRetry -Method GET -Uri "$script:GraphBase/sites/$($Reference.Hostname)`:$($Reference.RelativePath)?`$select=$script:SiteSelect"
+}
+
+function Find-SharePointSiteByWebUrl {
+    param(
+        [Parameter(Mandatory)][string]$SiteName,
+        [Parameter(Mandatory)][string]$WebUrl
+    )
+
+    $sites = Get-GraphSiteList -Search $SiteName
+    $wanted = $WebUrl.TrimEnd('/')
+    foreach ($candidate in $sites) {
+        if ([string]::IsNullOrWhiteSpace($candidate.webUrl)) { continue }
+        if ($candidate.webUrl.TrimEnd('/') -ieq $wanted) { return $candidate }
+    }
+    return $null
 }
 
 function Resolve-SharePointSiteFromUrl {
+    # Tries a deterministic search match on the site's webUrl first (this avoids
+    # the hostname:/path form and its colon), then the documented by-path lookup.
+    # Failures are reported rather than swallowed, so it is clear why a URL could
+    # not be resolved instead of silently falling back to a name search.
     param([Parameter(Mandatory)][string]$Url)
 
-    # Graph resolves a full site URL through /sites/{hostname}:/sites/{path}
-    if ($Url -notmatch '^https?://([^/]+)(/.+)?$') { return $null }
-    $siteHost = $Matches[1]
-    $sitePath = $Matches[2]
-    if (-not $sitePath) { $sitePath = "" }
+    $reference = ConvertTo-SharePointSiteReference -Url $Url
+    if (-not $reference) { return $null }
+
+    $siteName = ($reference.RelativePath -split '/')[-1]
+    if ([string]::IsNullOrWhiteSpace($siteName)) { $siteName = $reference.Hostname }
 
     try {
-        return Invoke-GraphWithRetry -Method GET -Uri "$script:GraphBase/sites/$siteHost`:$sitePath"
+        $site = Find-SharePointSiteByWebUrl -SiteName $siteName -WebUrl $reference.WebUrl
+        if ($site -and $site.id) { return $site }
     } catch {
-        return $null
+        Write-Host "  Site search failed ($(Get-GraphErrorMessage -ErrorRecord $_))." -ForegroundColor DarkYellow
     }
+
+    try {
+        $site = Get-SharePointSiteByPath -Reference $reference
+        if ($site -and $site.id) { return $site }
+    } catch {
+        Write-Host "  Path lookup failed ($(Get-GraphErrorMessage -ErrorRecord $_))." -ForegroundColor DarkYellow
+    }
+
+    return $null
 }
 
 function Select-SharePointSite {
@@ -38,25 +122,37 @@ function Select-SharePointSite {
         if ([string]::IsNullOrWhiteSpace($answer)) { return $null }
 
         $reference = $answer.Trim()
+        $searchTerm = $reference
+
         if ($reference -match '^https?://') {
             Write-Host "  Resolving the site from the URL..." -ForegroundColor DarkGray
             $site = Resolve-SharePointSiteFromUrl -Url $reference
-            if ($site -and $site.id) { return $site }
-            Write-Host "  Could not resolve that URL, falling back to a search." -ForegroundColor Yellow
-            $reference = ($reference.TrimEnd('/') -split '/')[-1]
+            if ($site -and $site.id) {
+                Write-Host "  Site resolved: $(Get-SharePointSiteLabel -Site $site)" -ForegroundColor Green
+                return $site
+            }
+
+            $normalized = ConvertTo-SharePointSiteReference -Url $reference
+            if ($normalized) {
+                Write-Host "  Could not resolve $($normalized.WebUrl). Searching for the site name instead." -ForegroundColor Yellow
+                $searchTerm = ($normalized.RelativePath -split '/')[-1]
+                if ([string]::IsNullOrWhiteSpace($searchTerm)) { $searchTerm = $normalized.Hostname }
+            } else {
+                Write-Host "  That does not look like a SharePoint URL, searching for it instead." -ForegroundColor Yellow
+            }
         }
 
-        Write-Host "  Searching sites for '$reference'..." -ForegroundColor DarkGray
-        $sites = Get-GraphSiteList -Search $reference
+        Write-Host "  Searching sites for '$searchTerm'..." -ForegroundColor DarkGray
+        $sites = Get-GraphSiteList -Search $searchTerm
         if ($sites.Count -eq 0) {
-            Write-Host "  No sites found for '$reference'. Please try again." -ForegroundColor Yellow
+            Write-Host "  No sites found for '$searchTerm'. Please try again." -ForegroundColor Yellow
             continue
         }
 
         Write-Host
         Write-Host "Sites found:"
         for ($i = 0; $i -lt $sites.Count; $i++) {
-            Write-Host "  $($i + 1). $($sites[$i].displayName) - $($sites[$i].webUrl)"
+            Write-Host "  $($i + 1). $(Get-SharePointSiteLabel -Site $sites[$i])"
         }
         Write-Host "  0. Cancel"
         Write-Host
@@ -65,7 +161,9 @@ function Select-SharePointSite {
         if ($selection -eq '0') { return $null }
         [int]$parsed = 0
         if ([int]::TryParse($selection, [ref]$parsed) -and $parsed -ge 1 -and $parsed -le $sites.Count) {
-            return $sites[$parsed - 1]
+            $chosen = $sites[$parsed - 1]
+            Write-Host "  Site selected: $(Get-SharePointSiteLabel -Site $chosen)" -ForegroundColor Green
+            return $chosen
         }
         Write-Host "  Invalid selection." -ForegroundColor Yellow
     }
@@ -74,7 +172,7 @@ function Select-SharePointSite {
 function Select-SiteDrive {
     param([Parameter(Mandatory)]$Site)
 
-    $drives = @(Get-AllPaged -Uri "$script:GraphBase/sites/$($Site.id)/drives?`$select=id,name,driveType,webUrl")
+    $drives = @(Get-AllPagedWithSelectFallback -Uri "$script:GraphBase/sites/$($Site.id)/drives?`$select=id,name,driveType,webUrl")
     if ($drives.Count -eq 0) {
         Write-Host "  No document library was found on this site." -ForegroundColor Yellow
         return $null
@@ -82,7 +180,7 @@ function Select-SiteDrive {
     if ($drives.Count -eq 1) { return $drives[0] }
 
     Write-Host
-    Write-Host "Document libraries on '$($Site.displayName)':"
+    Write-Host "Document libraries on '$(Get-SharePointSiteName -Site $Site)':"
     for ($i = 0; $i -lt $drives.Count; $i++) {
         Write-Host "  $($i + 1). $($drives[$i].name) [$($drives[$i].driveType)]"
     }
@@ -135,7 +233,11 @@ function Get-SharePointFolderSizes {
         [string]$LogPath
     )
 
-    $root = Invoke-GraphWithRetry -Method GET -Uri "$script:GraphBase/drives/$DriveId/root?`$select=id,name"
+    try {
+        $root = Invoke-GraphGetWithSelectFallback -Uri "$script:GraphBase/drives/$DriveId/root?`$select=id,name"
+    } catch {
+        throw "Could not read the drive root: $(Get-GraphErrorMessage -ErrorRecord $_)"
+    }
     if ([string]::IsNullOrWhiteSpace($LibraryName)) { $LibraryName = "Library" }
 
     $rows = New-Object System.Collections.Generic.List[object]
@@ -160,8 +262,9 @@ function Get-SharePointFolderSizes {
         try {
             $children = Get-DriveItemChildren -DriveId $DriveId -ItemId $current.Id
         } catch {
-            Write-Host "    Failed to list '$($current.Path)': $($_.Exception.Message)" -ForegroundColor Yellow
-            if ($LogPath) { Write-LogLine -LogPath $LogPath -Message "LIST FAIL '$($current.Path)': $($_.Exception.Message)" }
+            $reason = Get-GraphErrorMessage -ErrorRecord $_
+            Write-Host "    Failed to list '$($current.Path)': $reason" -ForegroundColor Yellow
+            if ($LogPath) { Write-LogLine -LogPath $LogPath -Message "LIST FAIL '$($current.Path)': $reason" }
             continue
         }
 
@@ -235,8 +338,11 @@ function Export-SharePointFolderSizesReport {
         [int]$Depth = 2
     )
 
-    $logPath = New-OperationLog -OperationName "sharepoint-folders-$(Get-SafeFileName $Site.displayName)"
+    $siteName = Get-SharePointSiteName -Site $Site
+    $logPath = New-OperationLog -OperationName "sharepoint-folders-$(Get-SafeFileName $siteName)"
     Write-Host "  Log: $logPath" -ForegroundColor DarkGray
+    Write-Host "  Site:    $siteName ($($Site.webUrl))" -ForegroundColor Gray
+    Write-Host "  Library: $($Drive.name)" -ForegroundColor Gray
     Write-LogLine -LogPath $logPath -Message "Site=$($Site.webUrl) Drive=$($Drive.name) ($($Drive.id)) Depth=$Depth"
 
     $depthLabel = if ($Depth -eq 0) { "unlimited" } else { "$Depth" }
@@ -254,7 +360,7 @@ function Export-SharePointFolderSizesReport {
     $reportDir = Get-M365ReportDirectory
     if (-not (Test-Path $reportDir)) { New-Item -ItemType Directory -Path $reportDir -Force | Out-Null }
     $stamp = Get-Date -Format "yyyy-MM-dd-HH-mm-ss"
-    $csvPath = Join-Path $reportDir "sharepoint-folders-$(Get-SafeFileName $Site.displayName)-$stamp.csv"
+    $csvPath = Join-Path $reportDir "sharepoint-folders-$(Get-SafeFileName $siteName)-$stamp.csv"
 
     $rows |
         Sort-Object -Property Level, @{ Expression = 'TotalSizeBytes'; Descending = $true } |

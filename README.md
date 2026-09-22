@@ -144,6 +144,8 @@ Every operation writes a log to `Downloads\m365admin-logs\`.
 
 Option 4 asks for the site (paste the site URL, or search by name), for the document library (only when the site has more than one), and for how many folder levels the report should cover:
 
+A pasted URL is resolved by matching the site's `webUrl` from a name search, then by a Graph path lookup; if neither works you get a readable reason (for example `HTTP 404: ...`) and the list of sites found by name, so you can pick it manually.
+
 | Value | What is walked | What you get |
 |---|---|---|
 | `1` | Root and level 1 folders | The library's direct child folders, each with the size of the files directly inside it |

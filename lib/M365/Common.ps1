@@ -191,6 +191,92 @@ function Get-AllPaged {
     return $results
 }
 
+function Get-GraphErrorMessage {
+    # Reduces a Graph/HTTP error to a single readable line, preferring the
+    # error.message that Microsoft Graph returns in its JSON body.
+    param(
+        [Parameter(Mandatory)]$ErrorRecord,
+        [int]$MaxLength = 300
+    )
+
+    $statusCode = $null
+    $text = $null
+
+    if ($ErrorRecord -is [System.Management.Automation.ErrorRecord]) {
+        try {
+            if ($ErrorRecord.Exception.Response -and $ErrorRecord.Exception.Response.StatusCode) {
+                $statusCode = [int]$ErrorRecord.Exception.Response.StatusCode
+            }
+        } catch { }
+        $text = [string]$ErrorRecord.Exception.Message
+    } else {
+        $text = [string]$ErrorRecord
+    }
+
+    $message = $null
+    $match = [regex]::Match($text, '"message"\s*:\s*"((?:[^"\\]|\\.)*)"')
+    if ($match.Success) {
+        $message = $match.Groups[1].Value
+        $message = $message -replace '\\"', '"' -replace '\\n', ' ' -replace '\\r', ' ' -replace '\\/', '/'
+    }
+
+    if (-not $message) {
+        $lines = @($text -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        if ($lines.Count -gt 0) {
+            $message = $lines[0]
+            if (($lines.Count -gt 1) -and ($lines[-1].TrimStart().StartsWith('{'))) { $message = $lines[-1] }
+        }
+    }
+
+    if (-not $message) { $message = "unknown error" }
+    $message = $message.Trim()
+    if ($message.Length -gt $MaxLength) { $message = $message.Substring(0, $MaxLength) + "..." }
+
+    if ($statusCode) { return "HTTP ${statusCode}: $message" }
+    return $message
+}
+
+function Remove-GraphSelectParameter {
+    param([Parameter(Mandatory)][string]$Uri)
+    $withoutSelect = [regex]::Replace($Uri, '([?&])\$select=[^&]*', '$1')
+    $withoutSelect = $withoutSelect -replace '\?&', '?'
+    $withoutSelect = $withoutSelect -replace '\?$', ''
+    $withoutSelect = $withoutSelect -replace '&$', ''
+    return $withoutSelect
+}
+
+function Invoke-GraphGetWithSelectFallback {
+    # GETs a projected ($select) Graph URI and, if the projection itself is
+    # rejected (for example a property that does not exist on that type), retries
+    # once without $select so the operation degrades instead of aborting.
+    param([Parameter(Mandatory)][string]$Uri)
+
+    try {
+        return Invoke-GraphWithRetry -Method GET -Uri $Uri
+    } catch {
+        if ($Uri -notmatch '\$select=') { throw }
+        Write-Host "  The projected query was rejected ($(Get-GraphErrorMessage -ErrorRecord $_)); retrying without `$select." -ForegroundColor DarkYellow
+        return Invoke-GraphWithRetry -Method GET -Uri (Remove-GraphSelectParameter -Uri $Uri)
+    }
+}
+
+function Get-AllPagedWithSelectFallback {
+    param([Parameter(Mandatory)][string]$Uri)
+
+    $results = @()
+    $next = $Uri
+    while ($next) {
+        if ($next -eq $Uri) {
+            $resp = Invoke-GraphGetWithSelectFallback -Uri $next
+        } else {
+            $resp = Invoke-GraphWithRetry -Method GET -Uri $next
+        }
+        if ($resp.value) { $results += $resp.value }
+        $next = $resp.'@odata.nextLink'
+    }
+    return $results
+}
+
 function Get-M365LogDirectory {
     if ($script:M365LogDir) { return $script:M365LogDir }
     return (Join-Path $env:USERPROFILE "Downloads\m365admin-logs")
