@@ -184,7 +184,7 @@ Set the variables at the top of `saasadmin.ps1` if your install differs from the
    ```
 
 `$GAMpath` — the GAM application folder.
-`$gamsettings` — the GAM multi-project settings folder.
+`$gamsettings` — the GAM multi-project settings folder (its `gam.cfg` holds one section per project, each with the project `domain` and `customer_id`).
 `$destinationpath` — where local output ends up (`Downloads\m365admin-logs\` for logs and `Downloads\m365admin-reports\` for CSV reports; the Google Workspace side uses it only for temp files).
 
 ### `m365tenant.txt`
@@ -206,7 +206,7 @@ Google Workspace admin accounts, one email address per line (lines starting with
    gwsadmin@contoso.com
    ```
 
-When you select a GAM project, the script reads that project's primary domain with GAM and uses the account from this file whose domain matches, so you do not have to type the admin account for every operation. If nothing matches — or the file is missing, or the domain cannot be determined — you are prompted for the admin account exactly as before. Either way the account is then validated with `gam info user` and `gam user <admin> check serviceaccount`.
+When you select a GAM project, the script resolves that project's primary domain and uses the account from this file whose domain matches, so you do not have to type the admin account for every operation. The domain is read from the project section in `gam.cfg` first (`domain = <primary domain>`, next to `config_dir`, as described in [Multiple Customers and Domains](https://github.com/GAM-team/GAM/wiki/gam.cfg)), because that value is available offline and does not require an authorized project. When the section does not define it, the script asks GAM instead (`gam select <project> info domain`, with `gam print domains` as fallback). If nothing matches — or the file is missing, or the domain cannot be determined — you are prompted for the admin account exactly as before. Either way the account is then validated with `gam info user` and `gam user <admin> check serviceaccount`.
 
 ## Instructions
 * Download the latest release and extract it locally ([releases](../../releases/latest)).

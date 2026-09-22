@@ -137,39 +137,144 @@ function Select-GwEmailAccountForDomain {
     return ($accounts | Where-Object { $_ -match "@$([regex]::Escape($Domain))$" } | Select-Object -First 1)
 }
 
-function Get-GamPrimaryDomain {
-    # Returns the primary domain of the currently selected GAM project, or $null
-    # when it cannot be determined (the caller then falls back to a manual prompt).
-    try {
-        $output = & "$GAMpath\gam.exe" info domain 2>&1
-    } catch {
-        return $null
-    }
-    foreach ($line in $output) {
-        if ($line -match '^\s*Domain:\s*(\S+)\s*$') { return $Matches[1] }
+function Get-GamCfgFilePath {
+    # gam.cfg lives next to the per-project config dirs: GamCfgDir is ~/.gam by
+    # default and can be relocated with the GAMCFGDIR environment variable.
+    if ($env:GAMCFGDIR) { return (Join-Path $env:GAMCFGDIR "gam.cfg") }
+    if ($gamsettings) { return (Join-Path $gamsettings "gam.cfg") }
+    return (Join-Path $PSScriptRoot "..\gam.cfg")
+}
+
+function Get-GamCfgProjectDomain {
+    # Returns the domain configured for the selected GAM project in gam.cfg, or
+    # $null. GAM keeps "domain = <primary domain>" in each project section, so this
+    # is an offline lookup that works even before the project is authorized.
+    # The section is matched by name or by its config_dir because saasadmin lists
+    # project folders while `gam select` only accepts section names.
+    param([string]$Section = $global:clientName)
+
+    if ([string]::IsNullOrWhiteSpace($Section)) { return $null }
+    $cfgPath = Get-GamCfgFilePath
+    if (-not (Test-Path $cfgPath)) { return $null }
+
+    $sections = @{}
+    $sectionOrder = @()
+    $currentSection = $null
+    foreach ($line in @(Get-Content -Path $cfgPath -ErrorAction SilentlyContinue)) {
+        $trimmed = "$line".Trim()
+        if (($trimmed -eq '') -or $trimmed.StartsWith('#') -or $trimmed.StartsWith(';')) { continue }
+        if ($trimmed -match '^\[(.+)\]$') {
+            $currentSection = $Matches[1].Trim()
+            if (-not $sections.ContainsKey($currentSection)) {
+                $sections[$currentSection] = @{}
+                $sectionOrder += $currentSection
+            }
+            continue
+        }
+        if (-not $currentSection) { continue }
+        $separator = $trimmed.IndexOf('=')
+        if ($separator -lt 1) { continue }
+        $key = $trimmed.Substring(0, $separator).Trim().ToLowerInvariant()
+        $value = $trimmed.Substring($separator + 1).Trim().Trim('"')
+        $sections[$currentSection][$key] = $value
     }
 
-    # Fallback for GAM builds where `info domain` is not available.
-    $csv = Join-Path $env:TEMP "gwadmin-domains-$datetime.csv"
-    try {
-        & "$GAMpath\gam.exe" redirect csv $csv print domains 2>&1 | Out-Null
-    } catch {
-        return $null
+    $byNameDomain = $null
+    $byConfigDirDomain = $null
+    $defaultDomain = $null
+    foreach ($name in $sectionOrder) {
+        $values = $sections[$name]
+        if ((-not $values.ContainsKey('domain')) -or [string]::IsNullOrWhiteSpace($values['domain'])) { continue }
+        if (($name -ieq $Section) -and (-not $byNameDomain)) { $byNameDomain = $values['domain'] }
+        if ($values.ContainsKey('config_dir') -and ($values['config_dir'] -ieq $Section) -and (-not $byConfigDirDomain)) {
+            $byConfigDirDomain = $values['domain']
+        }
+        if (($name -ieq 'DEFAULT') -and (-not $defaultDomain)) { $defaultDomain = $values['domain'] }
     }
-    if (Test-Path $csv) {
-        $rows = @(Import-Csv $csv)
-        Remove-Item $csv -ErrorAction SilentlyContinue
-        foreach ($row in $rows) {
-            if (-not $row.PSObject.Properties['isPrimary']) { continue }
-            if ("$($row.isPrimary)" -notmatch '^(?i:true)$') { continue }
-            foreach ($field in @('domainName', 'primaryDomain', 'domain')) {
-                if ($row.PSObject.Properties[$field] -and -not [string]::IsNullOrWhiteSpace($row.$field)) {
-                    return $row.$field
-                }
+    # GAM merges the [DEFAULT] section into every project, so a domain defined
+    # there is used as well, with the project's own value taking precedence.
+    if ($byNameDomain) { return $byNameDomain }
+    if ($byConfigDirDomain) { return $byConfigDirDomain }
+    return $defaultDomain
+}
+
+function Get-GamDomainFromInfoOutput {
+    # Parses `gam info domain` (no argument) output, which reports customer
+    # information as "Customer ID: ... / Primary Domain: <domain>". The plain
+    # "Domain: <domain>" and "domainName: <domain>" forms are accepted as well.
+    param([string[]]$Output)
+
+    foreach ($line in @($Output)) {
+        if ($line -match '^\s*(?:Primary\s+)?Domain(?:Name)?\s*[:=]\s*(\S+)\s*$') { return $Matches[1] }
+    }
+    return $null
+}
+
+function Get-GamDomainFromDomainsCsv {
+    # Parses the CSV written by `gam redirect csv <file> print domains`. GAM
+    # replaces isPrimary with a "type" column (primary/secondary/alias); older
+    # builds may still write isPrimary, so both are honored.
+    param([string]$Path)
+
+    if (-not $Path) { return $null }
+    if (-not (Test-Path $Path)) { return $null }
+
+    foreach ($row in @(Import-Csv $Path)) {
+        $isPrimary = $false
+        if ($row.PSObject.Properties['type']) { $isPrimary = ("$($row.type)" -match '^(?i:primary)$') }
+        if ((-not $isPrimary) -and $row.PSObject.Properties['isPrimary']) {
+            $isPrimary = ("$($row.isPrimary)" -match '^(?i:true)$')
+        }
+        if (-not $isPrimary) { continue }
+        foreach ($field in @('domainName', 'customerDomain', 'primaryDomain', 'domain', 'name')) {
+            if ($row.PSObject.Properties[$field] -and -not [string]::IsNullOrWhiteSpace($row.$field)) {
+                return $row.$field
             }
         }
     }
 
+    return $null
+}
+
+function Get-GamPrimaryDomain {
+    # Returns the primary domain of the currently selected GAM project, or $null
+    # when it cannot be determined (the caller then falls back to a manual prompt).
+    # Resolution order: the project section in gam.cfg, then `gam info domain`,
+    # then `gam print domains`.
+    $domain = Get-GamCfgProjectDomain
+    if ($domain) {
+        Write-Host "Using the domain $domain from the gam.cfg section of project '$clientName'."
+        return $domain
+    }
+
+    # Selecting the section explicitly keeps the lookup independent from the
+    # "select <project> save" performed when the project was picked.
+    $selectArgs = @()
+    if ($global:clientName) { $selectArgs = @('select', $global:clientName) }
+
+    $output = @()
+    try {
+        $output = @(& "$GAMpath\gam.exe" @selectArgs info domain 2>&1)
+    } catch {
+        $output = @()
+    }
+    $domain = Get-GamDomainFromInfoOutput -Output $output
+    if ($domain) { return $domain }
+
+    # Fallback for GAM builds where `info domain` is not available.
+    $csv = $null
+    if ($env:TEMP) { $csv = Join-Path $env:TEMP "gwadmin-domains-$datetime.csv" }
+    try {
+        & "$GAMpath\gam.exe" @selectArgs redirect csv $csv print domains 2>&1 | Out-Null
+    } catch {
+        $csv = $null
+    }
+    $domain = Get-GamDomainFromDomainsCsv -Path $csv
+    if ($csv) { Remove-Item $csv -ErrorAction SilentlyContinue }
+    if ($domain) { return $domain }
+
+    Write-Host "GAM returned the following while looking for the primary domain of project '$clientName':"
+    foreach ($line in @($output)) { Write-Host "  $line" }
     return $null
 }
 
