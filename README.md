@@ -2,16 +2,16 @@
 A PowerShell launcher and menu for common **Google Workspace** (driven by [GAM](https://github.com/GAM-team/GAM/)) and **Microsoft 365** (driven by Microsoft Graph) administration tasks, from a single entry point. The Google Workspace side is designed around offboarding-style operations: moving a user's Drive content into a Shared Drive and then cleaning up access delegation, renaming an offboarded user and automatically routing their historical email into a freshly configured Google Group, transferring calendars and event-organizer rights to another account, and managing mailbox delegation. The Microsoft 365 side covers message copies into shared mailboxes, OneDrive migrations into a new SharePoint site, calendar transfers, and SharePoint folder-size reporting.
 
 <!-- buttons -->
-[![Stars](https://img.shields.io/github/stars/ivancarlosti/gwadmin?label=⭐%20Stars&color=gold&style=flat)](https://github.com/ivancarlosti/gwadmin/stargazers)
-[![Watchers](https://img.shields.io/github/watchers/ivancarlosti/gwadmin?label=Watchers&style=flat&color=red)](https://github.com/sponsors/ivancarlosti)
-[![Forks](https://img.shields.io/github/forks/ivancarlosti/gwadmin?label=Forks&style=flat&color=ff69b4)](https://github.com/sponsors/ivancarlosti)
-[![Downloads](https://img.shields.io/github/downloads/ivancarlosti/gwadmin/total?label=Downloads&color=success)](https://github.com/ivancarlosti/gwadmin/releases)
-[![GitHub commit activity](https://img.shields.io/github/commit-activity/m/ivancarlosti/gwadmin?label=Activity)](https://github.com/ivancarlosti/gwadmin/pulse)
-[![GitHub Issues](https://img.shields.io/github/issues/ivancarlosti/gwadmin?label=Issues&color=orange)](https://github.com/ivancarlosti/gwadmin/issues)  
-[![License](https://img.shields.io/github/license/ivancarlosti/gwadmin?label=License)](LICENSE)
-[![GitHub last commit](https://img.shields.io/github/last-commit/ivancarlosti/gwadmin?label=Last%20Commit)](https://github.com/ivancarlosti/gwadmin/commits)
-[![Security](https://img.shields.io/badge/Security-View%20Here-purple)](https://github.com/ivancarlosti/gwadmin/security)
-[![Code of Conduct](https://img.shields.io/badge/Code%20of%20Conduct-2.1-4baaaa)](https://github.com/ivancarlosti/gwadmin?tab=coc-ov-file)
+[![Stars](https://img.shields.io/github/stars/ivancarlosti/saasadmin?label=⭐%20Stars&color=gold&style=flat)](https://github.com/ivancarlosti/saasadmin/stargazers)
+[![Watchers](https://img.shields.io/github/watchers/ivancarlosti/saasadmin?label=Watchers&style=flat&color=red)](https://github.com/sponsors/ivancarlosti)
+[![Forks](https://img.shields.io/github/forks/ivancarlosti/saasadmin?label=Forks&style=flat&color=ff69b4)](https://github.com/sponsors/ivancarlosti)
+[![Downloads](https://img.shields.io/github/downloads/ivancarlosti/saasadmin/total?label=Downloads&color=success)](https://github.com/ivancarlosti/saasadmin/releases)
+[![GitHub commit activity](https://img.shields.io/github/commit-activity/m/ivancarlosti/saasadmin?label=Activity)](https://github.com/ivancarlosti/saasadmin/pulse)
+[![GitHub Issues](https://img.shields.io/github/issues/ivancarlosti/saasadmin?label=Issues&color=orange)](https://github.com/ivancarlosti/saasadmin/issues)  
+[![License](https://img.shields.io/github/license/ivancarlosti/saasadmin?label=License)](LICENSE)
+[![GitHub last commit](https://img.shields.io/github/last-commit/ivancarlosti/saasadmin?label=Last%20Commit)](https://github.com/ivancarlosti/saasadmin/commits)
+[![Security](https://img.shields.io/badge/Security-View%20Here-purple)](https://github.com/ivancarlosti/saasadmin/security)
+[![Code of Conduct](https://img.shields.io/badge/Code%20of%20Conduct-2.1-4baaaa)](https://github.com/ivancarlosti/saasadmin?tab=coc-ov-file)
 <!-- endbuttons -->
 
 ## Menus
